@@ -22,7 +22,7 @@ int main (int argc, char *argv[])
 
 	gtk_container_border_width (GTK_CONTAINER (window), 10);
 	
-	panzen = panzen_new("/home/dylan/.panzen");
+	panzen = panzen_new();
 	g_assert(panzen);
 
 	label = panzen_get_widget(panzen);
