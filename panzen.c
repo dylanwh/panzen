@@ -1,19 +1,22 @@
 #include "panzen.h"
+#include <glib.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 struct Panzen {/*{{{*/
-	GIOChannel *chan;
-	guint tag;
-
-	GtkWidget *label;
-
 	GString    *buffer;
+	GtkWidget  *label;
+	GIOChannel *chan;
+	guint      tag;
 };/*}}}*/
 
-static gboolean on_input(GIOChannel *source, GIOCondition cond, gpointer data)/*{{{*/
+
+static GList *panzen_pipefiles = NULL;
+
+static gboolean panzen_on_input(GIOChannel *source, GIOCondition cond, gpointer data)/*{{{*/
 {
 	Panzen *panzen = data;
 	gsize buf_pos = 0;
@@ -43,52 +46,68 @@ static gboolean on_input(GIOChannel *source, GIOCondition cond, gpointer data)/*
 	return TRUE;
 }/*}}}*/
 
-/* must free result */
-static gchar *compute_fifo_filename(void)
+static void panzen_on_exit(void)/*{{{*/
 {
-	GString *buffer = g_string_new("");
+	g_return_if_fail(panzen_pipefiles != NULL);
+
+	for (GList *item = panzen_pipefiles; item != NULL; item = g_list_next(item)) {
+		remove((gchar *)item->data);
+		g_free((gchar *)item->data);
+	}
+}/*}}}*/
+
+static gchar *compute_fifo_pipefile(void)/*{{{*/
+{
 	const char *home = g_getenv ("HOME");
-	gchar *result;
 
   	if (!home)
 		home = g_get_home_dir ();
 
-	g_string_printf(buffer, "%s/%s", home, ".panzen");
-	result = buffer->str;
-	g_string_free(buffer, FALSE);
+	return g_strconcat(home, "/.panzen", NULL);
+}/*}}}*/
 
-	return result;
+inline static Panzen *panzen_new_real(gchar *pipefile);
+
+Panzen *panzen_new(void)
+{
+	gchar *pipefile = compute_fifo_pipefile();
+	Panzen *panzen = panzen_new_real(pipefile);
+	if (panzen == NULL)
+		g_free(pipefile);
+	return panzen;
 }
 
-Panzen *panzen_new(void)/*{{{*/
+inline static Panzen *panzen_new_real(gchar *pipefile)/*{{{*/
 {
-	gchar *filename = compute_fifo_filename();
 
-	int unlink_rv = remove(filename);
-	if (unlink_rv == -1 && errno != ENOENT)
-		g_error("panzen failed to unlink(%s): %s", filename, g_strerror(errno));
+	if (g_file_test(pipefile, G_FILE_TEST_IS_REGULAR))
+		unlink(pipefile);
 
-	int mkfifo_rv = mkfifo(filename, 0600);
-	if (mkfifo_rv == -1)
-		g_error("panzen failed to mkfifo(%s): %s", filename, g_strerror(errno));
+	int file_exists = g_file_test(pipefile, G_FILE_TEST_EXISTS);
+	g_return_val_if_fail(file_exists == FALSE, NULL);
 
-	GIOChannel *chan = g_io_channel_new_file(filename, "r+", NULL);
-	if (chan == NULL)
-		g_error("Unable to open fifo!");
+	int mkfifo_rv = mkfifo(pipefile, 0600);
+	g_return_val_if_fail(mkfifo_rv == 0, NULL);
+
+	GIOChannel *chan = g_io_channel_new_file(pipefile, "r+", NULL);
+	g_return_val_if_fail(chan != NULL, NULL);
 
 	GIOStatus status = g_io_channel_set_flags(chan, G_IO_FLAG_NONBLOCK, NULL);
-	if (status != G_IO_STATUS_NORMAL)
-		g_error("Unable to set non-blocking on fifo!");
-		
+	g_return_val_if_fail(status == G_IO_STATUS_NORMAL, NULL);
+
 	Panzen *panzen = g_new0(Panzen, 1);
 	panzen->buffer = g_string_new("");
 	panzen->label  = gtk_label_new("Panzen");
 	panzen->chan   = chan;
-	panzen->tag    = g_io_add_watch(chan, G_IO_IN, on_input, (gpointer) panzen);
+	panzen->tag    = g_io_add_watch(chan, G_IO_IN, panzen_on_input, (gpointer) panzen);
 
 	gtk_label_set_single_line_mode(GTK_LABEL(panzen->label), TRUE);
 
-	g_free(filename);
+	if (panzen_pipefiles == NULL)
+		atexit(panzen_on_exit);
+
+	panzen_pipefiles = g_list_prepend(panzen_pipefiles, (gpointer)pipefile);
+
 	return panzen;
 }/*}}}*/
 

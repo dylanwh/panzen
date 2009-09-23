@@ -4,9 +4,13 @@
 
 static gboolean panzen_applet_fill (PanelApplet *applet, const gchar *iid, gpointer data)/*{{{*/
 {
-	Panzen *panzen = panzen_new();
+	static Panzen *panzen = NULL;
+	
+	if (panzen == NULL)
+		panzen = panzen_new();
 
 	g_return_val_if_fail(strcmp(iid, "OAFIID:Panzen") == 0, FALSE );
+	g_return_val_if_fail(panzen != NULL, FALSE );
 
 	gtk_container_add(GTK_CONTAINER (applet), panzen_get_widget(panzen));
 	gtk_widget_show_all(GTK_WIDGET (applet));
